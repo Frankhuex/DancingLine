@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.InputSystem;
 using System.Collections.Generic;
 
@@ -31,6 +32,16 @@ public class PlayerController : MonoBehaviour
 
     [Tooltip("Fade-out duration of the music when player dies (in seconds).")]
     public float fadeOutDuration = 1.2f;
+
+    [Tooltip("Audio delay offset in seconds. Positive delays music; negative delays movement.")]
+    public float audioDelay = 0.0f;
+
+    [Header("Events")]
+    [Tooltip("Event triggered when the game starts.")]
+    public UnityEvent gameStartEvent;
+
+    [HideInInspector]
+    public bool isSettingsUIOpen = false;
 
     private Vector3 currentDirection = Vector3.forward;
     private Vector3 lastTurnPoint;
@@ -71,6 +82,9 @@ public class PlayerController : MonoBehaviour
         // 1. Handle Start Game
         if (!isPlaying)
         {
+            // Do not start the game if the settings UI panel is open and player is interacting with it
+            if (isSettingsUIOpen) return;
+
             if (CheckTurnInput())
             {
                 StartGame();
@@ -99,14 +113,21 @@ public class PlayerController : MonoBehaviour
         UpdateCurrentTrail();
 
         // 6. Check Fall Death Boundary
-        if (transform.position.y < fallDeathY)
-        {
-            Die("Fell out of bounds!");
-        }
+        // if (transform.position.y < fallDeathY)
+        // {
+        //     Die("Fell out of bounds!");
+        // }
     }
 
     private bool CheckTurnInput()
     {
+        // Check if pointer is currently over a UI element to prevent starting/turning when clicking UI buttons
+        if (UnityEngine.EventSystems.EventSystem.current != null && 
+            UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
+        {
+            return false;
+        }
+
         // Check new Input System actions
         if (jumpAction != null && jumpAction.WasPressedThisFrame())
         {
@@ -139,16 +160,57 @@ public class PlayerController : MonoBehaviour
         lastTurnPoint = transform.position;
         SpawnNewTrailSegment();
 
-        // Start playing the music if assigned
-        if (musicSource != null)
+        gameStartEvent?.Invoke();
+
+        if (audioDelay > 0f)
         {
-            musicSource.volume = 1f; // Reset volume to full
-            musicSource.time = 0f;   // Seek to beginning
-            musicSource.Play();
-            Debug.Log("Music started playing!");
+            // Positive delay: Start movement immediately, delay music playback
+            StartCoroutine(PlayMusicWithDelay(audioDelay));
+        }
+        else if (audioDelay < 0f)
+        {
+            // Negative delay: Start both immediately, but seek the music forward (skip the beginning)
+            if (musicSource != null)
+            {
+                musicSource.volume = 1f; // Reset volume to full
+                float seekTime = Mathf.Abs(audioDelay);
+                
+                // Clamp seek time to prevent seeking beyond the audio clip length
+                if (musicSource.clip != null)
+                {
+                    seekTime = Mathf.Min(seekTime, musicSource.clip.length - 0.1f);
+                }
+                
+                musicSource.time = seekTime; // Seek positive seconds forward
+                musicSource.Play();
+                Debug.Log($"Music started immediately at seek offset: {seekTime:F2}s (Negative Delay Mode)");
+            }
+        }
+        else
+        {
+            // Zero delay: Both start immediately at normal times
+            if (musicSource != null)
+            {
+                musicSource.volume = 1f; // Reset volume to full
+                musicSource.time = 0f;   // Seek to beginning
+                musicSource.Play();
+                Debug.Log("Music and movement started immediately");
+            }
         }
 
         Debug.Log("Dancing Line game started!");
+    }
+
+    private System.Collections.IEnumerator PlayMusicWithDelay(float delayTime)
+    {
+        yield return new WaitForSeconds(delayTime);
+        if (musicSource != null && isPlaying && !isDead)
+        {
+            musicSource.volume = 1f;
+            musicSource.time = 0f;
+            musicSource.Play();
+            Debug.Log($"Delayed music started playing after {delayTime} seconds");
+        }
     }
 
     private void Turn()
@@ -195,6 +257,7 @@ public class PlayerController : MonoBehaviour
         {
             if (!isGrounded)
             {
+                OnTriggerEnter(hit.collider);
                 // LANDING EVENT
                 isGrounded = true;
                 verticalVelocity = 0f;
@@ -310,6 +373,9 @@ public class PlayerController : MonoBehaviour
         isPlaying = false;
         
         Debug.LogWarning("Player Died! Reason: " + reason);
+
+        // Stop any pending start-delay coroutines cleanly
+        StopAllCoroutines();
 
         // Finalize the last trail segment if any
         if (currentTrailSegment != null)
