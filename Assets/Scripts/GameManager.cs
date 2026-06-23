@@ -9,8 +9,11 @@ public class GameManager : MonoBehaviour
     [Tooltip("The GameObject of the Game Over canvas")]
     public GameObject gameOverUI;
 
+    [Tooltip("The TextMeshPro text component to display the progress percentage")]
+    public TMPro.TextMeshProUGUI progressText;
+
     private void Awake()
-    {
+{
         if (Instance != null && Instance != this)
         {
             Destroy(gameObject);
@@ -28,10 +31,16 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    public void GameOver()
+    public void GameOver(int percentage)
     {
-        Debug.Log("Game Over triggered in GameManager!");
+        Debug.Log($"Game Over triggered in GameManager with {percentage}%!");
         
+        // Update the progress text
+        if (progressText != null)
+        {
+            progressText.text = $"{percentage}%";
+        }
+
         // Show the failure UI
         if (gameOverUI != null)
         {
@@ -48,5 +57,23 @@ public class GameManager : MonoBehaviour
         Debug.Log("Restarting scene...");
         // Reload current scene
         SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
+
+    public void Revive()
+    {
+        Debug.Log("Revive clicked!");
+        
+        // Hide the failure UI
+        if (gameOverUI != null)
+        {
+            gameOverUI.SetActive(false);
+        }
+
+        // Call revive on player
+        PlayerController player = GameObject.FindAnyObjectByType<PlayerController>();
+        if (player != null)
+        {
+            player.Revive();
+        }
     }
 }

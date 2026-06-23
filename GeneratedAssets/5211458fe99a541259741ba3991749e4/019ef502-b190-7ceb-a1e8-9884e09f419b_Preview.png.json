@@ -1,0 +1,12 @@
+{
+    "asset": "5211458fe99a541259741ba3991749e4",
+    "fileName": "019ef502-b190-7ceb-a1e8-9884e09f419b_Preview.png",
+    "prompt": "一张可以直接贴在正方体上的，方块人女孩的头的材质",
+    "negativePrompt": "",
+    "model": "gemini-3.1-flash-texture",
+    "modelName": "Gemini 3.1 Nano Banana 2",
+    "customSeed": 659752662,
+    "w3CTraceId": "",
+    "feedback": 0,
+    "refinementMode": "Generation"
+}

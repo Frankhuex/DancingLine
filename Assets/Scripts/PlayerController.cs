@@ -33,11 +33,26 @@ public class PlayerController : MonoBehaviour
     [Tooltip("Fade-out duration of the music when player dies (in seconds).")]
     public float fadeOutDuration = 1.2f;
 
-    [Tooltip("Audio delay offset in seconds. Positive delays music; negative delays movement.")]
-    public float audioDelay = 0.0f;
+    [System.Serializable]
+    public struct Checkpoint
+    {
+        public float musicTime;
+        public Vector3 position;
+        public Vector3 direction;
+        public int percentage;
+    }
+
+    private List<Checkpoint> checkpoints = new List<Checkpoint>
+    {
+        new Checkpoint { musicTime = 50.32f, position = new Vector3(189.64f, 0.25f, 263.23f), direction = Vector3.forward, percentage = 25 },
+        new Checkpoint { musicTime = 100.64f, position = new Vector3(432.32f, 0.25f, 473.43f), direction = Vector3.forward, percentage = 50 },
+        new Checkpoint { musicTime = 150.96f, position = new Vector3(650.09f, 0.25f, 708.53f), direction = Vector3.forward, percentage = 75 }
+    };
+
+    private int lastCheckpointIndex = -1;
 
     [Header("Events")]
-    [Tooltip("Event triggered when the game starts.")]
+[Tooltip("Event triggered when the game starts.")]
     public UnityEvent gameStartEvent;
 
     [HideInInspector]
@@ -52,9 +67,12 @@ public class PlayerController : MonoBehaviour
     private bool isGrounded = true;
     private float verticalVelocity = 0f;
     private bool isDead = false;
+    private bool musicStarted = false;
+    private bool waitingForInput = false;
+    private float resumeTime = 0f;
 
     // Input Actions
-    private InputAction jumpAction;
+private InputAction jumpAction;
     private InputAction attackAction;
 
     private void Start()
@@ -79,8 +97,35 @@ public class PlayerController : MonoBehaviour
         // If dead, do absolutely nothing
         if (isDead) return;
 
+        // 0. Handle Waiting for Input (after Revive)
+        if (waitingForInput)
+        {
+            if (CheckTurnInput())
+            {
+                waitingForInput = false;
+                isPlaying = true;
+                
+                // Start music at the checkpoint time minus the user delay
+                if (musicSource != null)
+                {
+                    musicSource.volume = 1f;
+                    // Formula: MusicSeekTime = MovementTime - Delay
+                    musicSource.time = Mathf.Max(0, resumeTime - StartMenuManager.musicDelay);
+                    musicSource.Play();
+                    musicStarted = true;
+                }
+
+                // Start a brand new trail segment from the current position
+                lastTurnPoint = transform.position;
+                SpawnNewTrailSegment();
+                
+                Debug.Log($"Game Resumed! MovementTime: {resumeTime:F2}s, AudioTime: {musicSource.time:F2}s");
+            }
+            return;
+        }
+
         // 1. Handle Start Game
-        if (!isPlaying)
+if (!isPlaying)
         {
             // Do not start the game if the settings UI panel is open and player is interacting with it
             if (isSettingsUIOpen) return;
@@ -112,8 +157,37 @@ public class PlayerController : MonoBehaviour
         // 5. Update Current Trail Segment size and position
         UpdateCurrentTrail();
 
-        // 6. Check Fall Death Boundary
-        // if (transform.position.y < fallDeathY)
+        // 6. Check Music Completion
+        if (isPlaying && musicStarted && musicSource != null && musicSource.clip != null)
+        {
+            // Calculate MovementTime (compensation for music delay)
+            float movementTime = musicSource.time + StartMenuManager.musicDelay;
+
+            // Update last checkpoint reached
+            for (int i = 0; i < checkpoints.Count; i++)
+            {
+                if (movementTime >= checkpoints[i].musicTime && i > lastCheckpointIndex)
+                {
+                    lastCheckpointIndex = i;
+                    Debug.Log($"Checkpoint {i + 1} ({checkpoints[i].percentage}%) reached! MovementTime: {movementTime:F2}s");
+                }
+            }
+
+            // If the music has reached the very end (or stopped naturally)
+if (!musicSource.isPlaying && musicSource.time == 0)
+            {
+                // This usually means it finished and reset to 0. 
+                // We'll treat this as 100% completion.
+                Die("Music Finished (100%)");
+            }
+            else if (musicSource.time >= musicSource.clip.length - 0.01f)
+            {
+                Die("Music Finished (Near End)");
+            }
+        }
+
+        // 7. Check Fall Death Boundary
+// if (transform.position.y < fallDeathY)
         // {
         //     Die("Fell out of bounds!");
         // }
@@ -162,18 +236,18 @@ public class PlayerController : MonoBehaviour
 
         gameStartEvent?.Invoke();
 
-        if (audioDelay > 0f)
+        if (StartMenuManager.musicDelay > 0f)
         {
             // Positive delay: Start movement immediately, delay music playback
-            StartCoroutine(PlayMusicWithDelay(audioDelay));
+            StartCoroutine(PlayMusicWithDelay(StartMenuManager.musicDelay));
         }
-        else if (audioDelay < 0f)
+        else if (StartMenuManager.musicDelay < 0f)
         {
             // Negative delay: Start both immediately, but seek the music forward (skip the beginning)
             if (musicSource != null)
             {
                 musicSource.volume = 1f; // Reset volume to full
-                float seekTime = Mathf.Abs(audioDelay);
+                float seekTime = Mathf.Abs(StartMenuManager.musicDelay);
                 
                 // Clamp seek time to prevent seeking beyond the audio clip length
                 if (musicSource.clip != null)
@@ -183,6 +257,7 @@ public class PlayerController : MonoBehaviour
                 
                 musicSource.time = seekTime; // Seek positive seconds forward
                 musicSource.Play();
+                musicStarted = true;
                 Debug.Log($"Music started immediately at seek offset: {seekTime:F2}s (Negative Delay Mode)");
             }
         }
@@ -194,6 +269,7 @@ public class PlayerController : MonoBehaviour
                 musicSource.volume = 1f; // Reset volume to full
                 musicSource.time = 0f;   // Seek to beginning
                 musicSource.Play();
+                musicStarted = true;
                 Debug.Log("Music and movement started immediately");
             }
         }
@@ -209,8 +285,9 @@ public class PlayerController : MonoBehaviour
             musicSource.volume = 1f;
             musicSource.time = 0f;
             musicSource.Play();
+            musicStarted = true;
             Debug.Log($"Delayed music started playing after {delayTime} seconds");
-        }
+}
     }
 
     private void Turn()
@@ -377,14 +454,29 @@ public class PlayerController : MonoBehaviour
         // Stop any pending start-delay coroutines cleanly
         StopAllCoroutines();
 
+        // Calculate music progress percentage (compensated for delay)
+        int percentage = 0;
+        if (musicSource != null && musicSource.clip != null)
+        {
+            if (reason.Contains("Music Finished"))
+            {
+                percentage = 100;
+            }
+            else
+            {
+                float movementTime = musicSource.time + StartMenuManager.musicDelay;
+                percentage = Mathf.Clamp(Mathf.FloorToInt((movementTime / musicSource.clip.length) * 100), 0, 100);
+            }
+        }
+
         // Finalize the last trail segment if any
         if (currentTrailSegment != null)
         {
             UpdateCurrentTrail();
         }
 
-        // Smoothly fade out music
-        if (musicSource != null && musicSource.isPlaying)
+        // Smoothly fade out music (only if it hasn't finished)
+        if (musicSource != null && musicSource.isPlaying && percentage < 100)
         {
             StartCoroutine(FadeOutMusic());
         }
@@ -392,7 +484,7 @@ public class PlayerController : MonoBehaviour
         // Trigger GameManager GameOver
         if (GameManager.Instance != null)
         {
-            GameManager.Instance.GameOver();
+            GameManager.Instance.GameOver(percentage);
         }
         else
         {
@@ -400,8 +492,72 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    private System.Collections.IEnumerator FadeOutMusic()
+    private float AdjustToRoadHeight(Vector3 pos)
     {
+        RaycastHit hit;
+        // Raycast from above the expected road position
+        if (Physics.Raycast(pos + Vector3.up * 50f, Vector3.down, out hit, 100f))
+        {
+            // Return the point on surface + half the player's height
+            return hit.point.y + (trailHeight * 0.5f);
+        }
+        // Fallback to current Y if nothing hit
+        return pos.y;
+    }
+
+    public void Revive()
+    {
+        if (!isDead && (isPlaying || waitingForInput)) return;
+
+        // 1. Clear existing trails
+        foreach (var trail in spawnedTrails)
+        {
+            if (trail != null) Destroy(trail);
+        }
+        spawnedTrails.Clear();
+        currentTrailSegment = null;
+
+        // 2. Determine respawn point
+        Vector3 respawnPos = new Vector3(0, 0.25f, 0);
+        Vector3 respawnDir = Vector3.forward;
+        float seekTime = 0f;
+
+        if (lastCheckpointIndex >= 0 && lastCheckpointIndex < checkpoints.Count)
+        {
+            var cp = checkpoints[lastCheckpointIndex];
+            respawnPos = cp.position;
+            respawnDir = cp.direction;
+            seekTime = cp.musicTime;
+        }
+
+        // 3. Adjust Y position to ensure it's on the road
+        respawnPos.y = AdjustToRoadHeight(respawnPos);
+
+        // 4. Reset Player Transform
+        transform.position = respawnPos;
+        currentDirection = respawnDir;
+        lastTurnPoint = respawnPos;
+        verticalVelocity = 0f;
+        isGrounded = true;
+        
+        // 5. Reset States (Wait for input)
+        isDead = false;
+        isPlaying = false;
+        musicStarted = false;
+        waitingForInput = true;
+        resumeTime = seekTime; // This seekTime was assigned from cp.musicTime which is 'MovementTime'
+
+        // 6. Stop Music
+        if (musicSource != null)
+        {
+            musicSource.Stop();
+        }
+
+        Debug.Log($"Revived at {(lastCheckpointIndex >= 0 ? checkpoints[lastCheckpointIndex].percentage + "%" : "Start")}. MovementTime to resume: {resumeTime:F2}s. Waiting for input...");
+    }
+
+    private System.Collections.IEnumerator FadeOutMusic()
+{
         float startVolume = musicSource.volume;
         float elapsed = 0f;
 

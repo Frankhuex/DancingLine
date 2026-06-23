@@ -36,6 +36,8 @@ public class StartMenuManager : MonoBehaviour
     private PlayerController player;
     private bool isSettingsOpen = false;
 
+    public static float musicDelay = 0f;
+
     private void Start()
     {
         // Find PlayerController in the scene
@@ -51,7 +53,7 @@ public class StartMenuManager : MonoBehaviour
         {
             delaySlider.minValue = -1.00f;
             delaySlider.maxValue = 1.00f;
-            delaySlider.value = player.audioDelay;
+            delaySlider.value = musicDelay;
             delaySlider.onValueChanged.AddListener(OnSliderChanged);
         }
 
@@ -62,7 +64,7 @@ public class StartMenuManager : MonoBehaviour
         if (plusButton != null) plusButton.onClick.AddListener(IncreaseDelay);
 
         // Set initial states
-        UpdateDelayText(player.audioDelay);
+        UpdateDelayText(musicDelay);
         if (delaySettingsPanel != null) delaySettingsPanel.SetActive(false);
         if (startCanvasGroup != null) startCanvasGroup.SetActive(true);
 
@@ -126,7 +128,7 @@ public class StartMenuManager : MonoBehaviour
 
         if (player != null)
         {
-            player.audioDelay = roundedValue;
+            musicDelay = roundedValue;
         }
 
         UpdateDelayText(roundedValue);
